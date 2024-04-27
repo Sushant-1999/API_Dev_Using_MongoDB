@@ -23,6 +23,7 @@ func main() {
 
 	//Register app routes here
 	routes.AuthRoutes(router)
+	routes.UserRoutes(*router)
 
 	router.GET("/api", func(c *gin.Context) {
 		c.JSON(200, gin.H{

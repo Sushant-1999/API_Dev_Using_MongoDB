@@ -8,6 +8,7 @@ import (
 	"shive-app/database"
 	helper "shive-app/helpers"
 	"shive-app/models"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -193,5 +194,68 @@ func Login() gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusOK, retrievedUser)
+	}
+}
+
+// Get the details of a single user
+func GetUser() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userId := c.Param("user_id")
+
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+		var user models.User
+		err := userCollection.FindOne(ctx, bson.M{"user_id": userId}).Decode(&user)
+		defer cancel()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, user)
+	}
+}
+
+// To get all users
+func GetUsers() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if err := helper.VerifyUserType(c, "ADMIN"); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+
+		recordPerPage, err := strconv.Atoi(c.Query("recordPerPage"))
+		if err != nil || recordPerPage < 1 {
+			recordPerPage = 10
+		}
+		page, err1 := strconv.Atoi(c.Query("page"))
+		if err1 != nil || page < 1 {
+			page = 1
+		}
+
+		startIndex := (page - 1) * recordPerPage
+		startIndex, err = strconv.Atoi(c.Query("startIndex"))
+
+		match := bson.D{{Key: "$match", Value: bson.D{{}}}}
+		group := bson.D{{Key: "$group", Value: bson.D{
+			{Key: "_id", Value: bson.D{{Key: "_id", Value: "null"}}},
+			{Key: "Total number", Value: bson.D{{Key: "$sum", Value: 1}}},
+			{Key: "data", Value: bson.D{{Key: "$push", Value: "$$ROOT"}}}}}}
+		projectStage := bson.D{
+			{Key: "$project", Value: bson.D{
+				{Key: "_id", Value: 0},
+				{Key: "Total number", Value: 1},
+				{Key: "All users", Value: bson.D{{Key: "$slice", Value: []interface{}{"$data", startIndex, recordPerPage}}}}}}}
+		result, err := userCollection.Aggregate(ctx, mongo.Pipeline{
+			match, group, projectStage})
+		defer cancel()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Ooops something went wrong. Can't fetch all users"})
+		}
+		var totalusers []bson.M
+		if err = result.All(ctx, &totalusers); err != nil {
+			log.Fatal(err)
+		}
+		c.JSON(http.StatusOK, totalusers[0])
 	}
 }
